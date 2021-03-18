@@ -23,17 +23,23 @@ const uint32_t LONG_TIME = 6000;
 uint8_t LED_PIN = 8;                    //指示灯
 
 //rf24
-const uint8_t RADIO_ID = 0;             //路由的rf24地址为0
+const uint8_t RADIO_ID = 23;             //路由的rf24地址
 const uint8_t CE_PIN = 9;
 const uint8_t CSN_PIN = 10;
 
 struct RadioPacket {                    //rf24的数据包
-    uint8_t fromRadioId;                //节点地址
+    uint8_t leafRadioId;                //节点地址
     uint32_t triggerTime;               //触发时间
 };
+RadioPacket radioPacket;
 
 NRFLite radio;
-RadioPacket radioPacket;
+
+//数据缓存后再发送
+const uint8_t MAX_LENGTH = 16;
+String dataBuffer[MAX_LENGTH];
+uint8_t dataLength = 0;
+
 
 void setup() {
     //esp
@@ -55,14 +61,24 @@ void setup() {
 }
 
 void loop() {
-    while (radio.hasData()) {
+    if (radio.hasData()) {                      //有包时接收数据放入数组
         radio.readData(&radioPacket);
-        String msg = "";
-        msg += radioPacket.fromRadioId;
-        msg += "L";
-        msg += radioPacket.triggerTime;
-        msg += "\\0\r\n";                       //注意是\\0
-        sendToPad(msg);
+        
+        if (dataLength < MAX_LENGTH) {                    
+            String msg = "";
+            msg += radioPacket.leafRadioId;
+            msg += "L";
+            msg += radioPacket.triggerTime;
+            msg += "\\0\r\n";                       //注意是\\0，并不是终止符\0
+            dataBuffer[dataLength] = msg;
+            dataLength ++;
+        }        
+    }
+    else {                                      //没有时发送数组里的数据
+        if (dataLength > 0) {
+            sendToClient(dataBuffer[dataLength - 1]);
+            dataLength --;
+        }
     }
 }
 
@@ -82,7 +98,7 @@ void initEsp() {
     sendATcmd(CIPSTO, MIDDLE_TIME);
 }
 //esp发送消息给平板
-void sendToPad(String msg) {
+void sendToClient(String msg) {
     sendATcmd(CIPSENDEX, SHORT_TIME);
     sendATcmd(msg, SHORT_TIME);
 }

@@ -7,18 +7,18 @@
 #include <NRFLite.h>
 
 //RF24
-const uint8_t RADIO_ID = 1;                 //路数
-const uint8_t TO_RADIO_ID = 0;              //目标路由的地址
+const uint8_t RADIO_ID = 2;                 //路数
+const uint8_t TO_RADIO_ID = 21;             //目标rf24的地址，外设固定发给21
 const uint8_t CE_PIN = 9;
 const uint8_t CSN_PIN = 10;
 
 struct RadioPacket {
-    uint8_t fromRadioId;
+    uint8_t leafRadioId;
     uint32_t triggerTime;
 };
+RadioPacket radioPacket;
 
 NRFLite radio;
-RadioPacket radioPacket;
 
 //黑灯
 const uint8_t LEP_PIN = 8;              //指示灯
@@ -29,19 +29,21 @@ uint32_t restartKeyTime;                //用于监测重新开始
 uint32_t gapStartTime;                  //gap开始的时间，用来判断是否遮挡黑灯
 uint32_t PWMStartTime;                  //PWM开始的时间
 uint32_t PWMElapsedTime;                //PWM的持续时间
+uint32_t lastTriggerTime = 0;           //上一次触发的时间，用来控制发送rf24的频率，因为rf24跟不上触发的频率
+const uint32_t SEND_INTERVAL = 1000;    //单位毫秒，过快发送rf24会导致esp01路由死机，所以设置间隔
 
 void setup() {
 //    Serial.begin(115200);
     pinMode(IR_RECV_PIN, INPUT);        //黑灯的out使用digitalRead引脚
     
-    pinMode(LEP_PIN, OUTPUT);           //开机指示灯闪烁3次后熄灭
-    blinkLed(LEP_PIN, 500, 300, 3);     //被载波照射时亮，遮挡时灭
+    pinMode(LEP_PIN, OUTPUT);           //开机指示灯闪烁
+    blinkLed(LEP_PIN, 300, 300, 3);
 
     //初始化RF24
     if (!radio.init(RADIO_ID, CE_PIN, CSN_PIN)) {
         while (1);
     }
-    radioPacket.fromRadioId = RADIO_ID;
+    radioPacket.leafRadioId = RADIO_ID;
 }
 
 void loop() {
@@ -59,9 +61,13 @@ void detectTrigger() {
         gapStartTime = micros();
         while (digitalRead(IR_RECV_PIN)) {
             if (micros() - gapStartTime > 8000 && hasRestarted) {//载波自己的gap时长为26us * 260 = 6760us，高电平时间大于8000us则表示遮挡
-                digitalWrite(LEP_PIN, LOW);         //遮挡时指示灯灭
+                uint32_t triggerTime = millis();
+                digitalWrite(LEP_PIN, HIGH);         //遮挡时指示灯亮
 //                Serial.println("trigger");
-                sendPacket();
+                if (triggerTime - lastTriggerTime > SEND_INTERVAL) {    //大于间隔才发送
+                    sendPacket(triggerTime);
+                    lastTriggerTime = triggerTime;      //重新赋值lastTriggerTime
+                }
                 hasRestarted = false;
             }
         }
@@ -86,7 +92,7 @@ void detectRestart() {
             if (restartKey == 3 && micros() - restartKeyTime < 18000) {             //在18000us内测到3个pwm表示重新开始，进一步排除环境干扰
                 hasRestarted = true;                                                // 300+300+40个周期 = 16842us < 18000us
                 restartKey = 0;
-                digitalWrite(LEP_PIN, HIGH);        //指示灯亮
+                digitalWrite(LEP_PIN, LOW);        //指示灯灭
             }
         }
     }
@@ -95,17 +101,17 @@ void detectRestart() {
 /*
  * 发送消息
  */
-void sendPacket() {
-    radioPacket.triggerTime = millis();
+void sendPacket(uint32_t triggerTime) {
+    radioPacket.triggerTime = triggerTime;
     radio.send(TO_RADIO_ID, &radioPacket, sizeof(radioPacket));
 }
 
 //指示灯闪烁
 void blinkLed(uint8_t led, uint16_t onTime, uint16_t offTime, uint8_t times) {
     for (uint8_t i = times; i > 0; i --) {
-        digitalWrite(led, HIGH);
-        delay(onTime);
         digitalWrite(led, LOW);
         delay(offTime);
+        digitalWrite(led, HIGH);
+        delay(onTime);
     }
 }
