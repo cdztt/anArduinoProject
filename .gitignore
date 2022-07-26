@@ -1,0 +1,4 @@
+.VSCodeCounter/*
+!.VSCodeCounter/202*
+.VSCodeCounter/202*/*
+!.VSCodeCounter/202*/results.md
